@@ -1,0 +1,21 @@
+# goal coordinates
+float32 x
+float32 y
+float32 z
+
+# height of goal object
+float32 obj_h
+
+# width of goal object
+float32 obj_w 
+
+# depth of goal object
+float32 obj_d
+---
+# Define the result
+float32 x
+float32 y
+float32 z
+---
+# The internal state that the pickup action currently is in
+string state
