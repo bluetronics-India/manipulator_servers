@@ -10,7 +10,28 @@ void executeCB(const pick_server::PickGoalConstPtr& goal, server_t* as)
 {
 
     ROS_INFO("[pick_server]: executeCB was called");
-    as->setSucceeded();
+
+
+    pick_server::PickFeedback feedback;
+    pick_server::PickResult result;
+
+    int x = 0;
+    while(!as->isPreemptRequested() || ros::ok())
+    {
+        x++;
+        feedback.state = std::to_string(x);
+
+        as->publishFeedback(feedback);
+        ros::Duration(1).sleep();
+
+        if (x > 3)
+            break;
+    }
+
+    result.x = x;
+
+    as->setSucceeded(result);
+
 }
 
 int main(int argc, char** argv)

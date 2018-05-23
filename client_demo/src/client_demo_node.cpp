@@ -5,6 +5,29 @@
 
 typedef actionlib::SimpleActionClient<pick_server::PickAction> client_t;
 
+// Called once when the goal completes
+void doneCb(const actionlib::SimpleClientGoalState& state,
+            const pick_server::PickResultConstPtr& result)
+{
+    ROS_INFO("Finished in state [%s]", state.toString().c_str());
+
+    ROS_INFO("Answer: %f", result->x);
+    ros::shutdown();
+}
+
+// Called once when the goal becomes active
+void activeCb()
+{
+    ROS_INFO("Goal just went active");
+}
+
+// Called every time feedback is received for the goal
+void feedbackCb(const pick_server::PickFeedbackConstPtr& feedback)
+{
+    ROS_INFO("Got Feedback %s", feedback->state.c_str());
+}
+
+
 int main(int argc, char** argv)
 {
     ros::init(argc, argv, "client_demo_node");
@@ -21,17 +44,8 @@ int main(int argc, char** argv)
     ROS_INFO("[pick_client]: ready");
 
     pick_server::PickGoal goal;
-    ac.sendGoal(goal);
+    ac.sendGoal(goal, &doneCb, &activeCb, &feedbackCb);
 
-    bool finished_before_timeout = ac.waitForResult(ros::Duration(30.0));
-
-    if (finished_before_timeout)
-    {
-        actionlib::SimpleClientGoalState state = ac.getState();
-        ROS_INFO("Action finished: %s",state.toString().c_str());
-    }
-    else
-        ROS_INFO("Action did not finish before the time out.");
 
     ros::spin();
 
