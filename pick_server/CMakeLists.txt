@@ -12,6 +12,7 @@ find_package(catkin REQUIRED COMPONENTS
   actionlib_msgs
   roscpp
   moveit_ros_planning_interface
+  tf
 )
 
 

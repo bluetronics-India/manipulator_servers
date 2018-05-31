@@ -3,14 +3,16 @@ float32 x
 float32 y
 float32 z
 
+string frame_id
+
+# name of goal object
+string obj_name
+
 # height of goal object
-float32 obj_h
+float32 h
 
 # width of goal object
-float32 obj_w 
-
-# depth of goal object
-float32 obj_d
+float32 w
 ---
 # Define the result
 float32 x

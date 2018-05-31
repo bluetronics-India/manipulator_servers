@@ -43,9 +43,21 @@ int main(int argc, char** argv)
 
     ROS_INFO("[pick_client]: ready");
 
+    // build goal
     pick_server::PickGoal goal;
-    ac.sendGoal(goal, &doneCb, &activeCb, &feedbackCb);
+    // set your coordinates frame
+    goal.frame_id = "/base_footprint";
+    goal.obj_name = "target";
+    // set target coordiantes
+    goal.x = 0.7;
+    goal.y = 0.0;
+    goal.z = 0.6;
+    // set target cylinder primitives
+    goal.h = 0.145;
+    goal.w = 0.03;
 
+    // send goal to action server
+    ac.sendGoal(goal, &doneCb, &activeCb, &feedbackCb);
 
     ros::spin();
 
