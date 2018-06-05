@@ -9,22 +9,26 @@ typedef actionlib::SimpleActionClient<pick_server::PickAction> client_t;
 void doneCb(const actionlib::SimpleClientGoalState& state,
             const pick_server::PickResultConstPtr& result)
 {
-    ROS_INFO("Finished in state [%s]", state.toString().c_str());
+    ROS_INFO("[pick_client]: finished in state [%s]", state.toString().c_str());
 
-    ROS_INFO("Answer: %f", result->x);
+    ROS_INFO("[pick_client]: answer - x: %f, y: %f, z: %f", result->x, result->y, result->z);
     ros::shutdown();
 }
 
 // Called once when the goal becomes active
 void activeCb()
 {
-    ROS_INFO("Goal just went active");
+    ROS_INFO("[pick_client]: goal just went active");
 }
 
 // Called every time feedback is received for the goal
 void feedbackCb(const pick_server::PickFeedbackConstPtr& feedback)
 {
-    ROS_INFO("Got Feedback %s", feedback->state.c_str());
+    ROS_INFO("[pick_client]: feedback - x: %f, y: %f, z: %f, distance: %f",
+             feedback->x,
+             feedback->y,
+             feedback->z,
+             feedback->distance);
 }
 
 
@@ -32,7 +36,6 @@ int main(int argc, char** argv)
 {
     ros::init(argc, argv, "client_demo_node");
     ros::NodeHandle nh;
-
 
     client_t ac("pick", true);
 

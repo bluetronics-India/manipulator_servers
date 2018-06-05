@@ -13,13 +13,25 @@
 // server wrapper for pick goals
 typedef actionlib::SimpleActionServer<pick_server::PickAction> pick_server_t;
 
-// moveit clients
+// moveit client
 typedef actionlib::SimpleActionClient<moveit_msgs::PickupAction> pick_client_t;
 
-moveit::planning_interface::PlanningSceneInterface *planning_scene_ptr;
+moveit::planning_interface::PlanningSceneInterface *planning_scene_ptr = nullptr;
 
-tf::TransformListener *transformer;
+moveit::planning_interface::MoveGroupInterface *group_ptr = nullptr;
 
+tf::TransformListener *transformer = nullptr;
+
+// planning scene cylinder object name
+std::string obj_name = "";
+
+// distance from gripper link to object
+double distance = 0.0;
+
+// is pick execution is in process
+bool executing = false;
+
+// adding cylinder to planning scene
 void addCylinderToScene(std::string name,
                         double x,
                         double y,
@@ -113,33 +125,38 @@ moveit_msgs::PickupGoal buildPickGoal(const std::string& obj_name)
     return pu_goal;
 }
 
-
 void executeCB(const pick_server::PickGoalConstPtr& goal, pick_server_t* as)
 {
+    executing = true;
+
+    distance = 0.0;
 
     pick_client_t pick_client("pickup", true);
     ROS_INFO("[pick_server]: waiting for Moveit pickup server");
     pick_client.waitForServer();
     ROS_INFO("[pick_server]: got Moveit pickup server");
 
-    //todo: print incoming request args
+    obj_name = goal->obj_name;
 
+    // get original goal point
     geometry_msgs::PointStamped origin_goal;
     origin_goal.header.frame_id = goal->frame_id;
     origin_goal.point.x = goal->x;
     origin_goal.point.y = goal->y;
     origin_goal.point.z = goal->z;
 
+    // transfer original goal to in relation to base footprint
     geometry_msgs::PointStamped transformed_goal;
-
     try
     {
         transformer->transformPoint("/base_footprint", origin_goal, transformed_goal);
     }
-    catch (tf::TransformException ex) {
+    catch (tf::TransformException ex)
+    {
         ROS_ERROR("%s",ex.what());
     }
 
+    // visualize object in planning scene
     addCylinderToScene(goal->obj_name,
                        transformed_goal.point.x,
                        transformed_goal.point.y,
@@ -147,43 +164,30 @@ void executeCB(const pick_server::PickGoalConstPtr& goal, pick_server_t* as)
                        goal->h,
                        goal->w);
 
+    // build and execute pick
     moveit_msgs::PickupGoal pick_goal = buildPickGoal(goal->obj_name);
     actionlib::SimpleClientGoalState pick_status = pick_client.sendGoalAndWait(pick_goal);
 
-    if(pick_status != actionlib::SimpleClientGoalState::SUCCEEDED)
+    // send result and last gripper_link position to client
+    geometry_msgs::PoseStamped eef_pose = group_ptr->getCurrentPose("gripper_link");
+    pick_server::PickResult result;
+    result.x = eef_pose.pose.position.x;
+    result.y = eef_pose.pose.position.y;
+    result.z = eef_pose.pose.position.z;
+
+    if(pick_status == actionlib::SimpleClientGoalState::SUCCEEDED)
     {
         ROS_INFO("[pick_server]: goal execution succeeded");
+        as->setSucceeded(result, pick_status.getText());
     }
     else
     {
         ROS_WARN("[pick_server]: goal execution failed");
+        as->setAborted(result, pick_status.getText());
     }
 
+    executing = false;
 
-    // todo: listen to pick results, and publish to my client
-    // todo: add table to planning scene
-
-    pick_server::PickFeedback feedback;
-    pick_server::PickResult result;
-
-    int x = 0;
-    while(!as->isPreemptRequested() || ros::ok())
-    {
-        x++;
-        feedback.state = std::to_string(x);
-
-        as->publishFeedback(feedback);
-        ros::Duration(1).sleep();
-
-        if (x > 3)
-            break;
-    }
-    // if preempted:
-    //as->setPreempted(result);
-
-    result.x = x;
-
-    as->setSucceeded(result);
 }
 
 int main(int argc, char** argv)
@@ -191,14 +195,13 @@ int main(int argc, char** argv)
     ros::init(argc, argv, "pick_server_node");
     ros::NodeHandle nh;
 
+    // use async spinner when working with moveit
+    ros::AsyncSpinner spinner(1);
+    spinner.start();
+    // we need move group to get gripper current point
     moveit::planning_interface::MoveGroupInterface group("arm");
-
-    /*group.setPlanningTime(10.0);
-    group.setNumPlanningAttempts(50);
-    group.setPlannerId("RRTConnectkConfigDefault");
-    group.setPoseReferenceFrame("base_footprint");
-
-    group.setStartStateToCurrentState();*/
+    group_ptr = &group;
+    group.setStartStateToCurrentState();
 
     pick_server_t pick_server(nh, "pick", boost::bind(&executeCB, _1, &pick_server), false);
     pick_server.start();
@@ -211,7 +214,38 @@ int main(int argc, char** argv)
 
     ROS_INFO("[pick_server]: ready");
 
-    ros::spin();
+    while (ros::ok())
+    {
+        // get current gripper position
+        geometry_msgs::PoseStamped eef_pose = group.getCurrentPose("gripper_link");
+
+        // get current object position
+        std::vector<std::string> object_ids;
+        object_ids.push_back(obj_name);
+        std::map<std::string, geometry_msgs::Pose> objects_map = planning_scene_interface.getObjectPoses(object_ids);
+
+        // if during pick excution, send feedback of distance
+        // between gripper and object to client
+        if (objects_map.size() > 0 && executing)
+        {
+            geometry_msgs::Pose obj_pose = objects_map[obj_name];
+            double delta_x = fabs(obj_pose.position.x - eef_pose.pose.position.x);
+            double delta_y = fabs(obj_pose.position.x - eef_pose.pose.position.x);
+            double delta_z = fabs(obj_pose.position.x - eef_pose.pose.position.x);
+            distance = sqrt( pow(delta_x, 2) + pow(delta_y, 2) + pow(delta_z, 2) );
+            //ROS_INFO("distance: %f", distance);
+            pick_server::PickFeedback feedback;
+            feedback.distance = distance;
+            feedback.x = eef_pose.pose.position.x;
+            feedback.y = eef_pose.pose.position.y;
+            feedback.z = eef_pose.pose.position.z;
+            pick_server.publishFeedback(feedback);
+        }
+
+
+        ros::Rate(10).sleep();
+        ros::spinOnce();
+    }
 
     return 0;
 }

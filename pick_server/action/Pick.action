@@ -13,11 +13,18 @@ float32 h
 
 # width of goal object
 float32 w
+
 ---
 # Define the result
+
 float32 x
 float32 y
 float32 z
+
 ---
 # The internal state that the pickup action currently is in
-string state
+
+float32 x
+float32 y
+float32 z
+float32 distance
