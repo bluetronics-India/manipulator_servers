@@ -2,7 +2,8 @@
 #include <ros/ros.h>
 #include <actionlib/server/simple_action_server.h>
 #include <actionlib/client/simple_action_client.h>
-#include <pick_server/PickAction.h>
+#include <arm_server/SimplePickAction.h>
+#include <arm_server/SimplePlaceAction.h>
 #include <moveit_msgs/PickupAction.h>
 #include <moveit_msgs/PlaceAction.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h>
@@ -10,11 +11,15 @@
 #include <tf/tf.h>
 #include <tf/transform_listener.h>
 
-// server wrapper for pick goals
-typedef actionlib::SimpleActionServer<pick_server::PickAction> pick_server_t;
+// server wrapper for pick & place goals
+typedef actionlib::SimpleActionServer<arm_server::SimplePickAction> pick_server_t;
+typedef actionlib::SimpleActionServer<arm_server::SimplePlaceAction> place_server_t;
+
 
 // moveit client
 typedef actionlib::SimpleActionClient<moveit_msgs::PickupAction> pick_client_t;
+typedef actionlib::SimpleActionClient<moveit_msgs::PlaceAction> place_client_t;
+
 
 moveit::planning_interface::PlanningSceneInterface *planning_scene_ptr = nullptr;
 
@@ -28,8 +33,10 @@ std::string obj_name = "";
 // distance from gripper link to object
 double distance = 0.0;
 
-// is pick execution is in process
-bool executing = false;
+// is execution is in process
+bool executing_pick = false;
+bool executing_place = false;
+
 
 // adding cylinder to planning scene
 void addCylinderToScene(std::string name,
@@ -125,16 +132,70 @@ moveit_msgs::PickupGoal buildPickGoal(const std::string& obj_name)
     return pu_goal;
 }
 
-void executeCB(const pick_server::PickGoalConstPtr& goal, pick_server_t* as)
+moveit_msgs::PlaceGoal buildPlaceGoal(double x,
+                                      double y,
+                                      double z,
+                                      const std::string& obj_name)
 {
-    executing = true;
+
+    moveit_msgs::PlaceGoal place_goal;
+    place_goal.group_name = "arm";
+    place_goal.attached_object_name = obj_name;
+    place_goal.place_eef = false;
+    place_goal.support_surface_name = "table"; ////////////////////////////////// TODO: BUILD TABLE OBJECT
+    place_goal.planner_id = "RRTConnectkConfigDefault";
+    place_goal.allowed_planning_time = 15.0; //////////////////////////////////////////TODO: TEST LOWER TIMES
+    place_goal.planning_options.replan = true;
+    place_goal.planning_options.replan_attempts = 5;
+    place_goal.planning_options.replan_delay = 2.0; //////////////////////////////////////////TODO: TEST LOWER TIMES
+    place_goal.planning_options.planning_scene_diff.is_diff = true;
+    place_goal.planning_options.planning_scene_diff.robot_state.is_diff = true;
+
+    std::vector<moveit_msgs::PlaceLocation> locations;
+    moveit_msgs::PlaceLocation location;
+    location.pre_place_approach.direction.header.frame_id = "/base_footprint";
+    location.pre_place_approach.direction.vector.z = -1.0;
+    location.pre_place_approach.min_distance = 0.1;
+    location.pre_place_approach.desired_distance = 0.2;
+
+    location.post_place_retreat.direction.header.frame_id = "/gripper_link";
+    location.post_place_retreat.direction.vector.x = -1.0;
+    location.post_place_retreat.min_distance = 0.0;
+    location.post_place_retreat.desired_distance = 0.2;
+
+    location.place_pose.header.frame_id = place_goal.support_surface_name;
+
+    location.place_pose.pose.position.x = x;
+    location.place_pose.pose.position.y = y;
+    location.place_pose.pose.position.z = z;
+    location.place_pose.pose.orientation.w = 1.0;
+
+    locations.push_back(location);
+    place_goal.place_locations = locations;
+
+    return place_goal;
+
+}
+
+
+/**************************PICK SERVER CALLBACKS****************************/
+void executePickCB(const arm_server::SimplePickGoalConstPtr& goal, pick_server_t* as)
+{
+    if (executing_place)
+    {
+        arm_server::SimplePickResult result;
+        as->setAborted(result, "tried to execute pick, while executing place");
+        return;
+    }
+
+    executing_pick = true;
 
     distance = 0.0;
 
     pick_client_t pick_client("pickup", true);
-    ROS_INFO("[pick_server]: waiting for Moveit pickup server");
+    ROS_INFO("[arm_server]: waiting for Moveit pickup server");
     pick_client.waitForServer();
-    ROS_INFO("[pick_server]: got Moveit pickup server");
+    ROS_INFO("[arm_server]: got Moveit pickup server");
 
     obj_name = goal->obj_name;
 
@@ -170,29 +231,108 @@ void executeCB(const pick_server::PickGoalConstPtr& goal, pick_server_t* as)
 
     // send result and last gripper_link position to client
     geometry_msgs::PoseStamped eef_pose = group_ptr->getCurrentPose("gripper_link");
-    pick_server::PickResult result;
+    arm_server::SimplePickResult result;
     result.x = eef_pose.pose.position.x;
     result.y = eef_pose.pose.position.y;
     result.z = eef_pose.pose.position.z;
 
     if(pick_status == actionlib::SimpleClientGoalState::SUCCEEDED)
     {
-        ROS_INFO("[pick_server]: goal execution succeeded");
+        ROS_INFO("[arm_server]: goal execution succeeded");
         as->setSucceeded(result, pick_status.getText());
     }
     else
     {
-        ROS_WARN("[pick_server]: goal execution failed");
+        ROS_WARN("[arm_server]: goal execution failed");
         as->setAborted(result, pick_status.getText());
     }
 
-    executing = false;
+    executing_pick = false;
 
 }
+/***************************************************************************/
+
+/**************************PLACE SERVER CALLBACKS***************************/
+void executePlaceCB(const arm_server::SimplePlaceGoalConstPtr& goal, place_server_t* as)
+{
+    if (executing_pick)
+    {
+        arm_server::SimplePlaceResult result;
+        as->setAborted(result, "tried to execute place, while executing pick");
+        return;
+    }
+
+    executing_place = true;
+
+    distance = 0.0;
+
+    place_client_t place_client("pick", true);
+    ROS_INFO("[arm_server]: waiting for Moveit place server");
+    place_client.waitForServer();
+    ROS_INFO("[arm_server]: got Moveit place server");
+
+    obj_name = goal->obj_name;
+
+    // get original goal point
+    geometry_msgs::PointStamped origin_goal;
+    origin_goal.header.frame_id = goal->frame_id;
+    origin_goal.point.x = goal->x;
+    origin_goal.point.y = goal->y;
+    origin_goal.point.z = goal->z;
+
+    // transfer original goal to in relation to base footprint
+    geometry_msgs::PointStamped transformed_goal;
+    try
+    {
+        transformer->transformPoint("/base_footprint", origin_goal, transformed_goal);
+    }
+    catch (tf::TransformException ex)
+    {
+        ROS_ERROR("%s",ex.what());
+    }
+
+    // visualize object in planning scene
+    addCylinderToScene(goal->obj_name,
+                       transformed_goal.point.x,
+                       transformed_goal.point.y,
+                       transformed_goal.point.z,
+                       goal->h,
+                       goal->w);
+
+    // build and execute pick
+    moveit_msgs::PlaceGoal place_goal = buildPlaceGoal(transformed_goal.point.x,
+                                                        transformed_goal.point.y,
+                                                        transformed_goal.point.z,
+                                                        goal->obj_name);
+    actionlib::SimpleClientGoalState place_status = place_client.sendGoalAndWait(place_goal);
+
+    // send result and last gripper_link position to client
+    geometry_msgs::PoseStamped eef_pose = group_ptr->getCurrentPose("gripper_link");
+    arm_server::SimplePlaceResult result;
+    result.x = eef_pose.pose.position.x;
+    result.y = eef_pose.pose.position.y;
+    result.z = eef_pose.pose.position.z;
+
+    if(place_status == actionlib::SimpleClientGoalState::SUCCEEDED)
+    {
+        ROS_INFO("[arm_server]: goal execution succeeded");
+        as->setSucceeded(result, place_status.getText());
+    }
+    else
+    {
+        ROS_WARN("[arm_server]: goal execution failed");
+        as->setAborted(result, place_status.getText());
+    }
+
+    executing_place = false;
+
+
+}
+/***************************************************************************/
 
 int main(int argc, char** argv)
 {
-    ros::init(argc, argv, "pick_server_node");
+    ros::init(argc, argv, "arm_server_node");
     ros::NodeHandle nh;
 
     // use async spinner when working with moveit
@@ -203,8 +343,11 @@ int main(int argc, char** argv)
     group_ptr = &group;
     group.setStartStateToCurrentState();
 
-    pick_server_t pick_server(nh, "pick", boost::bind(&executeCB, _1, &pick_server), false);
+    pick_server_t pick_server(nh, "simple_pick", boost::bind(&executePickCB, _1, &pick_server), false);
     pick_server.start();
+
+    place_server_t place_server(nh, "simple_place", boost::bind(&executePlaceCB, _1, &place_server), false);
+    place_server.start();
 
     moveit::planning_interface::PlanningSceneInterface planning_scene_interface;
     planning_scene_ptr = &planning_scene_interface;
@@ -212,7 +355,7 @@ int main(int argc, char** argv)
     tf::TransformListener tf_trans;
     transformer = &tf_trans;
 
-    ROS_INFO("[pick_server]: ready");
+    ROS_INFO("[arm_server]: ready");
 
     while (ros::ok())
     {
@@ -226,7 +369,7 @@ int main(int argc, char** argv)
 
         // if during pick excution, send feedback of distance
         // between gripper and object to client
-        if (objects_map.size() > 0 && executing)
+        if (objects_map.size() > 0)
         {
             geometry_msgs::Pose obj_pose = objects_map[obj_name];
             double delta_x = fabs(obj_pose.position.x - eef_pose.pose.position.x);
@@ -234,12 +377,26 @@ int main(int argc, char** argv)
             double delta_z = fabs(obj_pose.position.x - eef_pose.pose.position.x);
             distance = sqrt( pow(delta_x, 2) + pow(delta_y, 2) + pow(delta_z, 2) );
             //ROS_INFO("distance: %f", distance);
-            pick_server::PickFeedback feedback;
-            feedback.distance = distance;
-            feedback.x = eef_pose.pose.position.x;
-            feedback.y = eef_pose.pose.position.y;
-            feedback.z = eef_pose.pose.position.z;
-            pick_server.publishFeedback(feedback);
+
+
+            if (executing_place)
+            {
+                arm_server::SimplePlaceFeedback feedback;
+                feedback.distance = distance;
+                feedback.x = eef_pose.pose.position.x;
+                feedback.y = eef_pose.pose.position.y;
+                feedback.z = eef_pose.pose.position.z;
+                place_server.publishFeedback(feedback);
+            }
+            else if (executing_pick)
+            {
+                arm_server::SimplePickFeedback feedback;
+                feedback.distance = distance;
+                feedback.x = eef_pose.pose.position.x;
+                feedback.y = eef_pose.pose.position.y;
+                feedback.z = eef_pose.pose.position.z;
+                pick_server.publishFeedback(feedback);
+            }
         }
 
 
