@@ -11,6 +11,8 @@
 #include <tf/tf.h>
 #include <tf/transform_listener.h>
 
+#define TABLE_NAME "table"
+
 // server wrapper for pick & place goals
 typedef actionlib::SimpleActionServer<arm_server::SimplePickAction> pick_server_t;
 typedef actionlib::SimpleActionServer<arm_server::SimplePlaceAction> place_server_t;
@@ -76,11 +78,52 @@ void addCylinderToScene(std::string name,
     planning_scene_ptr->addCollisionObjects(col_objects);
 }
 
+// adding cylinder to planning scene
+void addBoxToScene(std::string name,
+                        double x,
+                        double y,
+                        double z,
+                        double height,
+                        double width,
+                        double depth)
+{
+    std::vector<moveit_msgs::CollisionObject> col_objects;
+    moveit_msgs::CollisionObject target_obj;
+    target_obj.id = name;
+
+    // define box primitives (size and shape)
+    shape_msgs::SolidPrimitive box_primitives;
+    box_primitives.type = box_primitives.BOX;
+    box_primitives.dimensions.resize(3);
+    box_primitives.dimensions[0] = height;
+    box_primitives.dimensions[1] = width;
+    box_primitives.dimensions[2] = depth;
+
+    target_obj.primitives.push_back(box_primitives);
+
+    // define object position and orientation
+    geometry_msgs::Pose target_pose;
+    target_pose.position.x = x;
+    target_pose.position.y = y;
+    target_pose.position.z = z;
+
+    target_pose.orientation = tf::createQuaternionMsgFromRollPitchYaw(0.0,0.0,0.0);
+
+    target_obj.primitive_poses.push_back(target_pose);
+
+    target_obj.operation = target_obj.ADD;
+    target_obj.header.frame_id = "/base_footprint";
+
+    col_objects.push_back(target_obj);
+    planning_scene_ptr->addCollisionObjects(col_objects);
+}
+
 moveit_msgs::PickupGoal buildPickGoal(const std::string& obj_name)
 {
     moveit_msgs::PickupGoal pu_goal;
     pu_goal.target_name = obj_name;
     pu_goal.group_name = "arm";
+    pu_goal.support_surface_name = TABLE_NAME;
     pu_goal.end_effector = "eef";
     pu_goal.allowed_planning_time = 15.0;
     pu_goal.planner_id = "RRTConnectkConfigDefault";
@@ -142,7 +185,7 @@ moveit_msgs::PlaceGoal buildPlaceGoal(double x,
     place_goal.group_name = "arm";
     place_goal.attached_object_name = obj_name;
     place_goal.place_eef = false;
-    place_goal.support_surface_name = "table"; ////////////////////////////////// TODO: BUILD TABLE OBJECT
+    place_goal.support_surface_name = TABLE_NAME;
     place_goal.planner_id = "RRTConnectkConfigDefault";
     place_goal.allowed_planning_time = 15.0; //////////////////////////////////////////TODO: TEST LOWER TIMES
     place_goal.planning_options.replan = true;
@@ -163,8 +206,7 @@ moveit_msgs::PlaceGoal buildPlaceGoal(double x,
     location.post_place_retreat.min_distance = 0.0;
     location.post_place_retreat.desired_distance = 0.2;
 
-    location.place_pose.header.frame_id = place_goal.support_surface_name;
-
+    location.place_pose.header.frame_id = "/base_footprint";
     location.place_pose.pose.position.x = x;
     location.place_pose.pose.position.y = y;
     location.place_pose.pose.position.z = z;
@@ -225,6 +267,16 @@ void executePickCB(const arm_server::SimplePickGoalConstPtr& goal, pick_server_t
                        goal->h,
                        goal->w);
 
+    double table_z = transformed_goal.point.z - (goal->h / 2.0)/* - 0.01*/;
+
+    addBoxToScene(TABLE_NAME,
+                  transformed_goal.point.x,
+                  transformed_goal.point.y,
+                  table_z,
+                  0.3,
+                  0.3,
+                  0.01);
+
     // build and execute pick
     moveit_msgs::PickupGoal pick_goal = buildPickGoal(goal->obj_name);
     actionlib::SimpleClientGoalState pick_status = pick_client.sendGoalAndWait(pick_goal);
@@ -266,7 +318,7 @@ void executePlaceCB(const arm_server::SimplePlaceGoalConstPtr& goal, place_serve
 
     distance = 0.0;
 
-    place_client_t place_client("pick", true);
+    place_client_t place_client("place", true);
     ROS_INFO("[arm_server]: waiting for Moveit place server");
     place_client.waitForServer();
     ROS_INFO("[arm_server]: got Moveit place server");
@@ -290,14 +342,6 @@ void executePlaceCB(const arm_server::SimplePlaceGoalConstPtr& goal, place_serve
     {
         ROS_ERROR("%s",ex.what());
     }
-
-    // visualize object in planning scene
-    addCylinderToScene(goal->obj_name,
-                       transformed_goal.point.x,
-                       transformed_goal.point.y,
-                       transformed_goal.point.z,
-                       goal->h,
-                       goal->w);
 
     // build and execute pick
     moveit_msgs::PlaceGoal place_goal = buildPlaceGoal(transformed_goal.point.x,

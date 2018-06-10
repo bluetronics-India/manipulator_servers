@@ -11,7 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   actionlib
   actionlib_msgs
   roscpp
-        pick_server
+        arm_server
 )
 
 ## System dependencies are found with CMake's conventions
@@ -106,7 +106,7 @@ find_package(catkin REQUIRED COMPONENTS
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES client_demo
-  CATKIN_DEPENDS actionlib actionlib_msgs roscpp pick_server
+  CATKIN_DEPENDS actionlib actionlib_msgs roscpp arm_server
 #  DEPENDS system_lib
 )
 

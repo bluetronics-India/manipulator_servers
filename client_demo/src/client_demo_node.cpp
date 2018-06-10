@@ -1,13 +1,16 @@
 
 #include <ros/ros.h>
 #include <actionlib/client/simple_action_client.h>
-#include <pick_server/PickAction.h>
+#include <arm_server/SimplePickAction.h>
+#include <arm_server/SimplePlaceAction.h>
 
-typedef actionlib::SimpleActionClient<pick_server::PickAction> client_t;
+typedef actionlib::SimpleActionClient<arm_server::SimplePickAction> pick_client_t;
+typedef actionlib::SimpleActionClient<arm_server::SimplePlaceAction> place_client_t;
 
+/******************************** PICK CALLBACKS *******************************************/
 // Called once when the goal completes
-void doneCb(const actionlib::SimpleClientGoalState& state,
-            const pick_server::PickResultConstPtr& result)
+void pickDoneCb(const actionlib::SimpleClientGoalState& state,
+            const arm_server::SimplePickResultConstPtr& result)
 {
     ROS_INFO("[pick_client]: finished in state [%s]", state.toString().c_str());
 
@@ -16,13 +19,13 @@ void doneCb(const actionlib::SimpleClientGoalState& state,
 }
 
 // Called once when the goal becomes active
-void activeCb()
+void pickActiveCb()
 {
     ROS_INFO("[pick_client]: goal just went active");
 }
 
 // Called every time feedback is received for the goal
-void feedbackCb(const pick_server::PickFeedbackConstPtr& feedback)
+void pickFeedbackCb(const arm_server::SimplePickFeedbackConstPtr& feedback)
 {
     ROS_INFO("[pick_client]: feedback - x: %f, y: %f, z: %f, distance: %f",
              feedback->x,
@@ -31,23 +34,51 @@ void feedbackCb(const pick_server::PickFeedbackConstPtr& feedback)
              feedback->distance);
 }
 
+/******************************************************************************************/
 
-int main(int argc, char** argv)
+/******************************** PLACE CALLBACKS *******************************************/
+// Called once when the goal completes
+void placeDoneCb(const actionlib::SimpleClientGoalState& state,
+                const arm_server::SimplePlaceResultConstPtr& result)
 {
-    ros::init(argc, argv, "client_demo_node");
-    ros::NodeHandle nh;
+    ROS_INFO("[place_client]: finished in state [%s]", state.toString().c_str());
 
-    client_t ac("pick", true);
+    ROS_INFO("[place_client]: answer - x: %f, y: %f, z: %f", result->x, result->y, result->z);
+    ros::shutdown();
+}
+
+// Called once when the goal becomes active
+void placeActiveCb()
+{
+    ROS_INFO("[place_client]: goal just went active");
+}
+
+// Called every time feedback is received for the goal
+void placeFeedbackCb(const arm_server::SimplePlaceFeedbackConstPtr& feedback)
+{
+    ROS_INFO("[place_client]: feedback - x: %f, y: %f, z: %f, distance: %f",
+             feedback->x,
+             feedback->y,
+             feedback->z,
+             feedback->distance);
+}
+
+/******************************************************************************************/
+
+
+void pickDemo()
+{
+    pick_client_t pick_client("simple_pick", true);
 
     // wait for server infinite time
     ROS_INFO("[pick_client]: waiting for pick_server...");
 
-    ac.waitForServer();
+    pick_client.waitForServer();
 
     ROS_INFO("[pick_client]: ready");
 
     // build goal
-    pick_server::PickGoal goal;
+    arm_server::SimplePickGoal goal;
     // set your coordinates frame
     goal.frame_id = "/base_footprint";
     goal.obj_name = "target";
@@ -60,7 +91,43 @@ int main(int argc, char** argv)
     goal.w = 0.03;
 
     // send goal to action server
-    ac.sendGoal(goal, &doneCb, &activeCb, &feedbackCb);
+    pick_client.sendGoal(goal, &pickDoneCb, &pickActiveCb, &pickFeedbackCb);
+}
+
+void placeDemo()
+{
+
+    place_client_t place_client("simple_place", true);
+
+    // wait for server infinite time
+    ROS_INFO("[pick_client]: waiting for place_server...");
+
+    place_client.waitForServer();
+
+    ROS_INFO("[pick_client]: ready");
+
+    // build goal
+    arm_server::SimplePlaceGoal goal;
+    // set your coordinates frame
+    goal.frame_id = "/base_footprint";
+    goal.obj_name = "target";
+    // set target coordiantes
+    goal.x = 0.7;
+    goal.y = 0.0;
+    goal.z = 0.6;
+
+    // send goal to action server
+    place_client.sendGoal(goal, &placeDoneCb, &placeActiveCb, &placeFeedbackCb);
+}
+
+int main(int argc, char** argv)
+{
+    ros::init(argc, argv, "client_demo_node");
+    ros::NodeHandle nh;
+
+    pickDemo();
+
+    //placeDemo();
 
     ros::spin();
 
