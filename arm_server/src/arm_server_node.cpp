@@ -17,10 +17,10 @@
 typedef actionlib::SimpleActionServer<arm_server::SimplePickAction> pick_server_t;
 typedef actionlib::SimpleActionServer<arm_server::SimplePlaceAction> place_server_t;
 
-
 // moveit client
 typedef actionlib::SimpleActionClient<moveit_msgs::PickupAction> pick_client_t;
 typedef actionlib::SimpleActionClient<moveit_msgs::PlaceAction> place_client_t;
+
 
 
 moveit::planning_interface::PlanningSceneInterface *planning_scene_ptr = nullptr;

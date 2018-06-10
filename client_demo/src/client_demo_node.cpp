@@ -125,11 +125,48 @@ int main(int argc, char** argv)
     ros::init(argc, argv, "client_demo_node");
     ros::NodeHandle nh;
 
-    pickDemo();
+    int chosen = 0;
 
-    //placeDemo();
+    while(ros::ok() && chosen != 9)
+    {
+        std::cout << "Please choose one of the following actions:" << std::endl;
+        std::cout << "1 - pick demo" << std::endl;
+        std::cout << "2 - place demo" << std::endl;
+        std::cout << "9 - quit" << std::endl;
 
-    ros::spin();
+        std::cin >> chosen;
+
+        switch (chosen)
+        {
+            case 1:
+            {
+                ROS_INFO("[client_demo]: executing pick demo");
+                pickDemo();
+                break;
+            }
+
+            case 2:
+            {
+                ROS_INFO("[client_demo]: executing place demo");
+                placeDemo();
+                break;
+            }
+
+            case 9:
+            {
+                ROS_INFO("[client_demo]: exiting...");
+                break;
+            }
+
+            default:
+            {
+                ROS_WARN("[client_demo]: Wrong input. Please choose valid option from menu");
+            }
+        }
+
+        if (chosen != 9)
+            chosen = 0;
+    }
 
     return 0;
 }
