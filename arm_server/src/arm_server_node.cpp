@@ -4,6 +4,7 @@
 #include <actionlib/client/simple_action_client.h>
 #include <arm_server/SimplePickAction.h>
 #include <arm_server/SimplePlaceAction.h>
+#include <arm_server/SimpleTargetAction.h>
 #include <moveit_msgs/PickupAction.h>
 #include <moveit_msgs/PlaceAction.h>
 #include <moveit/planning_scene_interface/planning_scene_interface.h>
@@ -16,6 +17,7 @@
 // server wrapper for pick & place goals
 typedef actionlib::SimpleActionServer<arm_server::SimplePickAction> pick_server_t;
 typedef actionlib::SimpleActionServer<arm_server::SimplePlaceAction> place_server_t;
+typedef actionlib::SimpleActionServer<arm_server::SimpleTargetAction> target_server_t;
 
 // moveit client
 typedef actionlib::SimpleActionClient<moveit_msgs::PickupAction> pick_client_t;
@@ -38,6 +40,7 @@ double distance = 0.0;
 // is execution is in process
 bool executing_pick = false;
 bool executing_place = false;
+bool executing_target = false;
 
 
 // adding cylinder to planning scene
@@ -219,14 +222,71 @@ moveit_msgs::PlaceGoal buildPlaceGoal(double x,
 
 }
 
+/**************************TARGET SERVER CALLBACKS****************************/
+void executeTargetCB(const arm_server::SimpleTargetGoalConstPtr& goal, target_server_t* as)
+{
+    if (executing_pick || executing_place)
+    {
+        arm_server::SimpleTargetResult result;
+        as->setAborted(result, "tried to execute target, while some other goal");
+        return;
+    }
+
+    executing_target = true;
+
+
+    // get original goal point
+    geometry_msgs::PointStamped origin_goal;
+    origin_goal.header.frame_id = goal->frame_id;
+    origin_goal.point.x = goal->x;
+    origin_goal.point.y = goal->y;
+    origin_goal.point.z = goal->z;
+
+    // transfer original goal to in relation to base footprint
+    geometry_msgs::PointStamped transformed_goal;
+    try
+    {
+        transformer->transformPoint("/base_footprint", origin_goal, transformed_goal);
+    }
+    catch (tf::TransformException ex)
+    {
+        ROS_ERROR("%s",ex.what());
+    }
+
+    moveit::planning_interface::MoveGroupInterface::Plan plan;
+
+    geometry_msgs::PoseStamped goal_pose;
+    goal_pose.header.frame_id = "/base_footprint";
+    goal_pose.pose.position.x = transformed_goal.point.x;
+    goal_pose.pose.position.y = transformed_goal.point.y;
+    goal_pose.pose.position.z = transformed_goal.point.z;
+    goal_pose.pose.orientation = tf::createQuaternionMsgFromRollPitchYaw(0, 0, 0);
+
+    group_ptr->setPoseTarget(goal_pose);
+    moveit::planning_interface::MoveItErrorCode err = group_ptr->plan(plan);
+    if ( err == moveit::planning_interface::MoveItErrorCode::SUCCESS )
+    {
+        ROS_INFO("[target_server]: plan found, executing...");
+
+        // Execute the plan
+        ros::Time start = ros::Time::now();
+        group_ptr->move();
+    }
+    else
+        ROS_WARN("[target_server]: plan failed");
+
+    executing_target = false;
+}
+/***************************************************************************/
+
 
 /**************************PICK SERVER CALLBACKS****************************/
 void executePickCB(const arm_server::SimplePickGoalConstPtr& goal, pick_server_t* as)
 {
-    if (executing_place)
+    if (executing_place || executing_target)
     {
         arm_server::SimplePickResult result;
-        as->setAborted(result, "tried to execute pick, while executing place");
+        as->setAborted(result, "tried to execute target, while some other goal");
         return;
     }
 
@@ -307,10 +367,10 @@ void executePickCB(const arm_server::SimplePickGoalConstPtr& goal, pick_server_t
 /**************************PLACE SERVER CALLBACKS***************************/
 void executePlaceCB(const arm_server::SimplePlaceGoalConstPtr& goal, place_server_t* as)
 {
-    if (executing_pick)
+    if (executing_pick || executing_target)
     {
         arm_server::SimplePlaceResult result;
-        as->setAborted(result, "tried to execute place, while executing pick");
+        as->setAborted(result, "tried to execute target, while some other goal");
         return;
     }
 
@@ -382,16 +442,31 @@ int main(int argc, char** argv)
     // use async spinner when working with moveit
     ros::AsyncSpinner spinner(1);
     spinner.start();
-    // we need move group to get gripper current point
+
+    // we need move group to get gripper current point, and for target server
     moveit::planning_interface::MoveGroupInterface group("arm");
     group_ptr = &group;
     group.setStartStateToCurrentState();
+    group.setPlannerId("RRTConnectkConfigDefault");
+    group.setPoseReferenceFrame("/base_footprint");
+    group.setMaxVelocityScalingFactor(1.0);
+    group.setNumPlanningAttempts(5);
+    group.setPlanningTime(5.0);
+
+    //It is important to provide some tolerance
+    group.setGoalPositionTolerance(0.01);
+    group.setGoalOrientationTolerance(0.02);
+    //group_arm_torso.setGoalJointTolerance(0.01);
+    //group_arm_torso.setGoalTolerance(0.05);
 
     pick_server_t pick_server(nh, "simple_pick", boost::bind(&executePickCB, _1, &pick_server), false);
     pick_server.start();
 
     place_server_t place_server(nh, "simple_place", boost::bind(&executePlaceCB, _1, &place_server), false);
     place_server.start();
+
+    target_server_t target_server(nh, "simple_target", boost::bind(&executeTargetCB, _1, &target_server), false);
+    target_server.start();
 
     moveit::planning_interface::PlanningSceneInterface planning_scene_interface;
     planning_scene_ptr = &planning_scene_interface;
@@ -440,6 +515,15 @@ int main(int argc, char** argv)
                 feedback.y = eef_pose.pose.position.y;
                 feedback.z = eef_pose.pose.position.z;
                 pick_server.publishFeedback(feedback);
+            }
+            else if (executing_target)
+            {
+                arm_server::SimpleTargetFeedback feedback;
+                feedback.distance = distance;
+                feedback.x = eef_pose.pose.position.x;
+                feedback.y = eef_pose.pose.position.y;
+                feedback.z = eef_pose.pose.position.z;
+                target_server.publishFeedback(feedback);
             }
         }
 

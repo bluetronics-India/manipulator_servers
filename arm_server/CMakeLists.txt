@@ -68,6 +68,7 @@ find_package(catkin REQUIRED COMPONENTS
   FILES
          SimplePick.action
          SimplePlace.action
+         SimpleTarget.action
  )
 
 ## Generate added messages and services with any dependencies listed here
